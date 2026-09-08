@@ -84,6 +84,10 @@ msgstr "Головна"
 msgid "Search"
 msgstr "Пошук"
 
+#: src/ui/sidebar.rs:846
+msgid "New releases"
+msgstr ""
+
 #: src/ui/sidebar.rs:874
 msgid "Hide sidebar (Ctrl+B)"
 msgstr "Сховати бічну панель (Ctrl+B)"
@@ -566,11 +570,6 @@ msgstr "АЛЬБОМ"
 msgctxt "column heading"
 msgid "ADDED BY"
 msgstr "ХТО ДОДАВ"
-
-#: src/ui/widgets.rs:2164
-msgctxt "column heading"
-msgid "DATE ADDED"
-msgstr "ДАТА ДОДАВАННЯ"
 
 #: src/ui/widgets.rs:2185 src/ui/widgets.rs:2215
 msgid "Sort by duration"
@@ -3204,3 +3203,7 @@ msgstr ""
 "У Windows на ARM Spotifast використовує OpenGL із пакета Microsoft OpenCL, "
 "OpenGL & Vulkan Compatibility Pack. Відкрити його сторінку в Microsoft "
 "Store, щоб установити або відновити пакет?"
+
+#~ msgctxt "column heading"
+#~ msgid "DATE ADDED"
+#~ msgstr "ДАТА ДОДАВАННЯ"

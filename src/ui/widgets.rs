@@ -1998,13 +1998,13 @@ pub fn explicit_badge(ui: &mut Ui, palette: &Palette) {
 /// was clicked, so the table can sort by it.
 // The column switches and the language are independent inputs of one
 // drawing call; a struct would exist only to carry them here.
-#[expect(clippy::fn_params_excessive_bools, clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn table_header(
     ui: &mut Ui,
     palette: &Palette,
     locale: Locale,
     show_album: bool,
-    show_added: bool,
+    added_heading: Option<&str>,
     show_added_by: bool,
     show_cover: bool,
     sort: Option<crate::model::TableSort>,
@@ -2141,7 +2141,11 @@ pub fn table_header(
     } else {
         0.0
     };
-    let added_width = if show_added && wide { 120.0 } else { 0.0 };
+    let added_width = if added_heading.is_some() && wide {
+        120.0
+    } else {
+        0.0
+    };
     let extra_wide = width > 920.0;
     let added_by_width = if show_added_by && extra_wide {
         130.0
@@ -2168,13 +2172,10 @@ pub fn table_header(
         );
         cx += added_by_width;
     }
-    if added_width > 0.0 {
-        heading(
-            ui,
-            cx,
-            &pgettext(locale, "column heading", "DATE ADDED"),
-            SortColumn::Added,
-        );
+    if added_width > 0.0
+        && let Some(added_heading) = added_heading
+    {
+        heading(ui, cx, added_heading, SortColumn::Added);
     }
     if number_clicked {
         clicked = Some(SortColumn::Index);

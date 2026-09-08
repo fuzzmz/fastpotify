@@ -165,6 +165,7 @@ pub fn radio(app: &mut App, ui: &mut egui::Ui, seed: &str) {
             show_album: true,
             show_cover: true,
             show_added: false,
+            added_heading: "DATE ADDED",
             show_added_by: false,
             page: key,
             loading: false,
