@@ -36,6 +36,7 @@ Spotifast follows each platform's conventions. On Linux:
 | Artwork cache | `~/.cache/spotifast/art/` | Always |
 | Lyrics cache | `~/.cache/spotifast/lyrics/` | Always |
 | Account-scoped playlist page cache | `~/.cache/spotifast/playlists/<account-id>/` | Always |
+| Account-scoped New releases cache | `~/.cache/spotifast/new-releases/<account-id>/` | Always |
 | Last run's log | `~/.local/state/spotifast/spotifast.log` | Always |
 | Crash log | `~/.local/state/spotifast/panic.log` | Always |
 
@@ -144,6 +145,11 @@ Like and Unlike change the rows immediately, and confirmed edits survive a
 restart even if Spotify's next read still reports the old state. This cache
 contains metadata, not offline audio, and can be deleted without signing out.
 
+Each completed New releases scan is cached for its account, artist sources,
+time period, and liked-song threshold. A result less than 30 minutes old opens
+without another scan. Older results remain visible while Spotifast refreshes
+them, for up to seven days; **Refresh** always requests a new scan.
+
 The last good playlist folder tree is kept in `session.json`, scoped to the
 account that supplied it. This keeps folders visible when local playback is
 temporarily unavailable. Live session data is still required for edit grants.
@@ -229,6 +235,12 @@ main fields are:
 | `liked_songs_pinned` | `true` | Keep Liked Songs in the pin block; older settings place it first until moved |
 | `sidebar_compact` | `false` | Names only in the library sidebar, no covers |
 | `tracklist_compact` | `false` | One-line track rows without covers |
+| `new_releases_days` | `30` | Days included on the New releases page |
+| `new_releases_artist_sources` | followed artists | Library sources that contribute artists to New releases |
+| `new_releases_minimum_liked_tracks` | `3` | Liked songs an artist needs when Liked Songs is a source |
+| `new_releases_groups` | all four groups | Albums, singles, compilations, and appearances shown in New releases |
+| `new_releases_hide_remixes` | `false` | Hide releases with `remix` in the title |
+| `new_releases_hide_duplicates` | `true` | Keep one copy of releases with the same date, artist, and normalized title |
 | `winamp_window` | `false` | The window is the Winamp mini player |
 | `winamp_show_taskbar` | `true` | Windows only, since 0.8.0: show the Winamp window's taskbar button; the main window always keeps its button |
 | `skin` | none | File or folder name in the skins folder; blank uses the built-in skin |

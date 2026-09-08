@@ -426,6 +426,32 @@ pub fn populate(app: &mut App) {
         ),
     );
 
+    // New releases, already hydrated as the live release feed would return.
+    app.settings.new_releases_artist_sources = crate::settings::ReleaseArtistSource::ALL.to_vec();
+    app.settings.new_releases_minimum_liked_tracks = 3;
+    let release_groups = ["album", "single", "compilation", "appears_on"];
+    let releases = (0..6)
+        .map(|index| {
+            let mut release = album(index);
+            release.album_group = Some(release_groups[index % release_groups.len()].into());
+            release.release_date = Some(format!("2026-09-{:02}", 7usize.saturating_sub(index)));
+            let mut summary = release.clone();
+            summary.tracks = None;
+            let release_tracks = (0..3)
+                .map(|track_index| {
+                    let mut track = track(index * 3 + track_index);
+                    track.artists.clone_from(&summary.artists);
+                    track.album = Some(summary.clone());
+                    track
+                })
+                .collect();
+            release.tracks = Some(page(release_tracks));
+            release
+        })
+        .collect();
+    app.new_releases.releases = Loadable::Loaded(releases);
+    app.new_releases.revision = 1;
+
     // Home.
     app.home.requested = true;
     app.home.loaded_at = Some(Instant::now());
@@ -1121,6 +1147,8 @@ mod tests {
             accessible_frame(&ctx, &mut app, vec![]);
             let tree = accessible_frame(&ctx, &mut app, vec![]);
             let home = accessible_node(&tree, &gettext(locale, "Home"), Role::Button);
+            let new_releases =
+                accessible_node(&tree, &gettext(locale, "New releases"), Role::Button);
             let search = accessible_node(&tree, &gettext(locale, "Search"), Role::Button);
             accessible_node(&tree, &gettext(locale, "Create a playlist"), Role::Button);
             accessible_node(&tree, &gettext(locale, "Albums"), Role::Button);
@@ -1130,6 +1158,15 @@ mod tests {
                 &ctx,
                 &mut app,
                 vec![accessible_action(home, AccessibleAction::Focus, None)],
+            );
+            let tree = accessible_frame(
+                &ctx,
+                &mut app,
+                vec![keyboard(egui::Key::Tab, egui::Modifiers::NONE)],
+            );
+            assert_eq!(
+                tree.focus, new_releases,
+                "Tab order must survive translation"
             );
             let tree = accessible_frame(
                 &ctx,
@@ -1362,13 +1399,34 @@ mod tests {
             assert!(app.manual_queue.is_empty());
             assert_eq!(app.queue.get().unwrap().queue, rows[2..]);
             let tree = accessible_frame(&ctx, &mut app, vec![]);
-            let recent = accessible_node(&tree, &gettext(locale, "Recent"), Role::Button);
+            // Chinese uses the same label for this tab and the Library's
+            // Recently played order. The queue panel is the rightmost match.
+            let recent = tree
+                .nodes
+                .iter()
+                .filter(|(_, node)| {
+                    node.label() == Some(&gettext(locale, "Recent"))
+                        && node.role() == Role::Button
+                        && node.bounds().is_some()
+                })
+                .max_by(|(_, left), (_, right)| {
+                    left.bounds()
+                        .unwrap()
+                        .x0
+                        .total_cmp(&right.bounds().unwrap().x0)
+                })
+                .expect("Recent tab in the queue panel")
+                .0;
             accessible_frame(
                 &ctx,
                 &mut app,
                 vec![accessible_action(recent, AccessibleAction::Click, None)],
             );
-            assert_eq!(app.queue_tab, QueueTab::Recents);
+            assert_eq!(
+                app.queue_tab,
+                QueueTab::Recents,
+                "translated Recent tab did not activate for {locale:?}"
+            );
             let tree = accessible_frame(&ctx, &mut app, vec![]);
             let close = accessible_node(&tree, &gettext(locale, "Close"), Role::Button);
             accessible_frame(
@@ -4401,6 +4459,7 @@ mod tests {
 
         let pages = [
             Page::Home,
+            Page::NewReleases,
             Page::TopSongs,
             Page::Search,
             Page::LikedSongs,
@@ -5520,6 +5579,7 @@ mod tests {
                                 show_cover: true,
                                 show_added: false,
                                 show_added_by: false,
+                                added_heading: "DATE ADDED",
                                 page: Page::Playlist("pl1".into()),
                                 loading: false,
                                 error: None,

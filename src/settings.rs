@@ -77,6 +77,76 @@ pub enum VisMode {
     Off,
 }
 
+/// A Spotify discography group shown on the New releases page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseGroup {
+    Album,
+    Single,
+    Compilation,
+    AppearsOn,
+}
+
+/// A library surface that can contribute artists to the New releases page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseArtistSource {
+    FollowedArtists,
+    SavedAlbums,
+    LikedSongs,
+}
+
+impl ReleaseArtistSource {
+    pub const ALL: [Self; 3] = [Self::FollowedArtists, Self::SavedAlbums, Self::LikedSongs];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::FollowedArtists => "Followed artists",
+            Self::SavedAlbums => "Saved albums",
+            Self::LikedSongs => "Liked songs",
+        }
+    }
+}
+
+impl ReleaseGroup {
+    pub const ALL: [Self; 4] = [
+        Self::Album,
+        Self::Single,
+        Self::Compilation,
+        Self::AppearsOn,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Album => "Albums",
+            Self::Single => "Singles & EPs",
+            Self::Compilation => "Compilations",
+            Self::AppearsOn => "Appearances",
+        }
+    }
+
+    pub fn spotify_value(self) -> &'static str {
+        match self {
+            Self::Album => "album",
+            Self::Single => "single",
+            Self::Compilation => "compilation",
+            Self::AppearsOn => "appears_on",
+        }
+    }
+}
+
+fn default_release_groups() -> Vec<ReleaseGroup> {
+    ReleaseGroup::ALL.to_vec()
+}
+
+fn default_release_artist_sources() -> Vec<ReleaseArtistSource> {
+    vec![ReleaseArtistSource::FollowedArtists]
+}
+
+fn default_new_releases_days() -> u16 {
+    30
+}
+
 impl VisMode {
     /// Next mode in the display's click cycle.
     pub fn next(self) -> Self {
@@ -208,6 +278,22 @@ pub struct Settings {
     pub queue_width: f32,
     /// Use compact single-line rows without cover art in track lists.
     pub tracklist_compact: bool,
+    /// How far back the New releases page asks Spotify to look.
+    #[serde(default = "default_new_releases_days")]
+    pub new_releases_days: u16,
+    /// Library surfaces whose artists are included on the New releases page.
+    #[serde(default = "default_release_artist_sources")]
+    pub new_releases_artist_sources: Vec<ReleaseArtistSource>,
+    /// Liked songs an artist needs before that source includes them.
+    #[serde(default = "default_minimum_liked_tracks")]
+    pub new_releases_minimum_liked_tracks: u16,
+    /// Discography groups visible on the New releases page.
+    #[serde(default = "default_release_groups")]
+    pub new_releases_groups: Vec<ReleaseGroup>,
+    /// Hide releases whose title contains "remix".
+    pub new_releases_hide_remixes: bool,
+    /// Keep one copy when Spotify exposes the same release more than once.
+    pub new_releases_hide_duplicates: bool,
     pub search_history: Vec<String>,
     pub show_shortcut_hints: bool,
     /// An optional personal Spotify Web API application id. The shared
@@ -355,6 +441,12 @@ impl Default for Settings {
             lyrics_width: 360.0,
             queue_width: 360.0,
             tracklist_compact: false,
+            new_releases_days: default_new_releases_days(),
+            new_releases_artist_sources: default_release_artist_sources(),
+            new_releases_minimum_liked_tracks: default_minimum_liked_tracks(),
+            new_releases_groups: default_release_groups(),
+            new_releases_hide_remixes: false,
+            new_releases_hide_duplicates: true,
             search_history: Vec::new(),
             show_shortcut_hints: true,
             web_client_id: None,
@@ -406,6 +498,10 @@ impl Default for Settings {
 
 fn default_buffer_ms() -> u32 {
     crate::sink::DEFAULT_BUFFER_MS
+}
+
+fn default_minimum_liked_tracks() -> u16 {
+    3
 }
 
 impl Settings {
@@ -1274,6 +1370,39 @@ mod tests {
         );
         super::ManualProxy::parse(super::ManualKind::Http, "localhost", "8080", "", "").unwrap();
         super::ManualProxy::parse(super::ManualKind::Http, "::1", "8080", "", "").unwrap();
+    }
+
+    #[test]
+    fn older_settings_get_the_new_release_defaults() {
+        let settings: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(settings.new_releases_days, 30);
+        assert_eq!(
+            settings.new_releases_artist_sources,
+            [super::ReleaseArtistSource::FollowedArtists]
+        );
+        assert_eq!(settings.new_releases_minimum_liked_tracks, 3);
+        assert_eq!(settings.new_releases_groups, super::ReleaseGroup::ALL);
+        assert!(!settings.new_releases_hide_remixes);
+        assert!(settings.new_releases_hide_duplicates);
+    }
+
+    #[test]
+    fn new_release_filters_round_trip() {
+        let settings = Settings {
+            new_releases_days: 90,
+            new_releases_artist_sources: vec![
+                super::ReleaseArtistSource::SavedAlbums,
+                super::ReleaseArtistSource::LikedSongs,
+            ],
+            new_releases_minimum_liked_tracks: 5,
+            new_releases_groups: vec![super::ReleaseGroup::Single],
+            new_releases_hide_remixes: true,
+            new_releases_hide_duplicates: false,
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let restored: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, settings);
     }
 
     #[test]

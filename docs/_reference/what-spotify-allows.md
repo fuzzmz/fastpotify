@@ -26,7 +26,9 @@ Spotifast uses the Web API for:
   unfollowing. Custom playlist cover uploads are on `main`, after 0.8.0.
 - **Catalogue:** albums, artists, tracks, shows, episodes, search, and
   recommendations. Artist pages include top tracks, releases, and related
-  artists.
+  artists. The New releases page combines followed artists, saved albums,
+  Liked Songs, and artist discography endpoints; Spotify does not provide it as
+  one feed.
 - **Playback control:** listing devices, transferring playback, play, pause,
   next, previous, seek, shuffle, repeat, volume, and reading or adding to the
   queue.

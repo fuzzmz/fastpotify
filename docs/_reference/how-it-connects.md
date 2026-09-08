@@ -101,6 +101,14 @@ with its current-track pickup.
   See [migration, sign-out, and storage protection](/settings-and-files/).
 - Downloaded audio and artwork, in the cache directory, within the budget
   you set.
+- When New releases needs fresh data, it asks for artists from the selected
+  sources—followed artists, saved albums, and/or Liked Songs—and then their
+  Spotify discographies. For Liked Songs it reads the library to count each
+  credited artist and applies the selected minimum. It expands
+  only releases in the selected time period into tracks. The page reports
+  progress while it checks artists and loads tracks. Completed results are
+  cached by account and filter choices; recent results open immediately, while
+  older cached rows remain visible during a background refresh.
 - The first time MilkDrop opens with an empty preset folder, the two projectM
   preset packs are downloaded from GitHub (about 26 MB) and stored in the
   config directory.

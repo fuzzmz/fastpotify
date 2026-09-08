@@ -53,50 +53,54 @@ msgid "Home"
 msgstr "首页"
 
 #: src/ui/sidebar.rs:529
+msgid "New releases"
+msgstr "新发行内容"
+
+#: src/ui/sidebar.rs:540
 msgid "Search"
 msgstr "搜索"
 
-#: src/ui/sidebar.rs:561
+#: src/ui/sidebar.rs:572
 msgid "Library"
 msgstr "音乐库"
 
-#: src/ui/sidebar.rs:574
+#: src/ui/sidebar.rs:585
 msgid "Hide sidebar (Ctrl+B)"
 msgstr "隐藏侧边栏 (Ctrl+B)"
 
-#: src/ui/sidebar.rs:575
+#: src/ui/sidebar.rs:586
 msgid "Hide sidebar (Cmd+B)"
 msgstr "隐藏侧边栏 (Cmd+B)"
 
-#: src/ui/sidebar.rs:589
+#: src/ui/sidebar.rs:600
 msgid "Create a playlist"
 msgstr "创建歌单"
 
-#: src/ui/sidebar.rs:605
+#: src/ui/sidebar.rs:616
 msgid "Search Your Library"
 msgstr "搜索音乐库"
 
-#: src/ui/sidebar.rs:623
+#: src/ui/sidebar.rs:634
 msgid "Playlists"
 msgstr "歌单"
 
-#: src/ui/sidebar.rs:624
+#: src/ui/sidebar.rs:635
 msgid "Albums"
 msgstr "专辑"
 
-#: src/ui/sidebar.rs:625
+#: src/ui/sidebar.rs:636
 msgid "Artists"
 msgstr "艺人"
 
-#: src/ui/sidebar.rs:626
+#: src/ui/sidebar.rs:637
 msgid "Podcasts"
 msgstr "播客"
 
-#: src/ui/sidebar.rs:646
+#: src/ui/sidebar.rs:657
 msgid "Search in Your Library"
 msgstr "在音乐库中搜索"
 
-#: src/ui/sidebar.rs:780 src/app.rs:2193
+#: src/ui/sidebar.rs:791 src/app.rs:2193
 msgid "Artist"
 msgstr "艺人"
 

@@ -53,50 +53,54 @@ msgid "Home"
 msgstr "ホーム"
 
 #: src/ui/sidebar.rs:529
+msgid "New releases"
+msgstr "新着リリース"
+
+#: src/ui/sidebar.rs:540
 msgid "Search"
 msgstr "検索"
 
-#: src/ui/sidebar.rs:561
+#: src/ui/sidebar.rs:572
 msgid "Library"
 msgstr "ライブラリ"
 
-#: src/ui/sidebar.rs:574
+#: src/ui/sidebar.rs:585
 msgid "Hide sidebar (Ctrl+B)"
 msgstr "サイドバーを非表示 (Ctrl+B)"
 
-#: src/ui/sidebar.rs:575
+#: src/ui/sidebar.rs:586
 msgid "Hide sidebar (Cmd+B)"
 msgstr "サイドバーを非表示 (Cmd+B)"
 
-#: src/ui/sidebar.rs:589
+#: src/ui/sidebar.rs:600
 msgid "Create a playlist"
 msgstr "プレイリストを作成"
 
-#: src/ui/sidebar.rs:605
+#: src/ui/sidebar.rs:616
 msgid "Search Your Library"
 msgstr "ライブラリを検索"
 
-#: src/ui/sidebar.rs:623
+#: src/ui/sidebar.rs:634
 msgid "Playlists"
 msgstr "プレイリスト"
 
-#: src/ui/sidebar.rs:624
+#: src/ui/sidebar.rs:635
 msgid "Albums"
 msgstr "アルバム"
 
-#: src/ui/sidebar.rs:625
+#: src/ui/sidebar.rs:636
 msgid "Artists"
 msgstr "アーティスト"
 
-#: src/ui/sidebar.rs:626
+#: src/ui/sidebar.rs:637
 msgid "Podcasts"
 msgstr "ポッドキャスト"
 
-#: src/ui/sidebar.rs:646
+#: src/ui/sidebar.rs:657
 msgid "Search in Your Library"
 msgstr "ライブラリ内を検索"
 
-#: src/ui/sidebar.rs:780 src/app.rs:2193
+#: src/ui/sidebar.rs:791 src/app.rs:2193
 msgid "Artist"
 msgstr "アーティスト"
 

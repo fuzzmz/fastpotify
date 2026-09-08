@@ -228,6 +228,13 @@ pub struct Album {
     pub copyrights: Vec<Copyright>,
 }
 
+/// Response from Spotify's bulk album endpoint.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+pub struct Albums {
+    #[serde(default = "Vec::new", deserialize_with = "skip_nulls")]
+    pub albums: Vec<Album>,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct Copyright {
     #[serde(default)]
@@ -863,6 +870,14 @@ mod tests {
         assert_eq!(modern.items.len(), 1);
         assert_eq!(modern.items[0].playable().unwrap().name(), "Ep");
         assert!(!modern.items[0].playable().unwrap().is_track());
+    }
+
+    #[test]
+    fn bulk_albums_skip_unavailable_entries() {
+        let json = r#"{"albums":[null,{"id":"available","name":"Album"}]}"#;
+        let albums: Albums = serde_json::from_str(json).unwrap();
+        assert_eq!(albums.albums.len(), 1);
+        assert_eq!(albums.albums[0].id, "available");
     }
 
     #[test]

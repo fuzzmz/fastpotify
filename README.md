@@ -64,6 +64,10 @@ AUR and Homebrew packages now use the Spotifast name. See [rename compatibility]
   Liked Songs reopens from an account-specific metadata cache. Older rows
   refresh in the background while Like and Unlike take effect immediately.
   Right-click album, artist, and podcast cards for their actions (available since 0.8.0).
+- **New releases.** See new tracks from followed artists and artists in saved
+  albums or Liked Songs in one playable list. Set a minimum liked-song count,
+  filter by time period, release type, title, artist, or album, and hide remixes
+  or duplicate releases.
 - **Search** across songs, artists, albums, playlists, podcasts, and episodes,
   with a top result and per-type views. Right-click results and cards for their actions.
   When Spotify provides an artist profile, its name on a song opens that page,
@@ -507,6 +511,7 @@ opens the local JSON palette directory.
 Playback settings apply when you press **Apply and restart playback**.
 The Settings page has its own search: type under the title to narrow the
 rows, clear the field to see everything again.
+The filters chosen on the New releases page are kept in the same file.
 You can also check for a new release from Settings. On macOS, the same command
 is in the application menu.
 

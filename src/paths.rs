@@ -201,6 +201,15 @@ impl AppDirs {
             .join(format!("{account}.json"))
     }
 
+    pub fn account_new_releases_cache_dir(&self, account_id: &str) -> PathBuf {
+        // Keep the account-specific cache inside its root for unusual IDs too.
+        let account: String = account_id
+            .bytes()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        self.cache.join("new-releases").join(account)
+    }
+
     pub fn ensure(&self) -> std::io::Result<()> {
         for dir in [&self.config, &self.state, &self.cache] {
             std::fs::create_dir_all(dir)?;

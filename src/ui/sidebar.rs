@@ -525,6 +525,17 @@ fn contents(app: &mut App, ui: &mut egui::Ui) {
     if nav_row(
         ui,
         &palette,
+        Icon::Sparkles,
+        &gettext(locale, "New releases"),
+        page == Page::NewReleases,
+    )
+    .clicked()
+    {
+        app.actions.push(Action::Open(Page::NewReleases));
+    }
+    if nav_row(
+        ui,
+        &palette,
         Icon::Search,
         &gettext(locale, "Search"),
         page == Page::Search,

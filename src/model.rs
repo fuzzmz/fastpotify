@@ -95,6 +95,7 @@ fn episode_retained_bytes(episode: &Episode) -> usize {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Page {
     Home,
+    NewReleases,
     TopSongs,
     Search,
     LikedSongs,
@@ -114,6 +115,7 @@ impl Page {
     pub fn encode(&self) -> String {
         match self {
             Page::Home => "home".into(),
+            Page::NewReleases => "new-releases".into(),
             Page::TopSongs => "top-songs".into(),
             Page::Search => "search".into(),
             Page::LikedSongs => "liked".into(),
@@ -133,6 +135,7 @@ impl Page {
     pub fn decode(text: &str) -> Option<Self> {
         Some(match text {
             "home" => Page::Home,
+            "new-releases" => Page::NewReleases,
             "top-songs" => Page::TopSongs,
             "search" => Page::Search,
             "liked" => Page::LikedSongs,
@@ -570,6 +573,22 @@ pub struct HomeData {
     pub loaded_at: Option<Instant>,
 }
 
+/// Followed-artist releases expanded with their playable tracks.
+#[derive(Default)]
+pub struct NewReleasesData {
+    pub releases: Loadable<Vec<Album>>,
+    /// A cached list may remain visible while a newer scan is in flight.
+    pub refreshing: bool,
+    pub progress: Option<crate::api::ReleaseScanProgress>,
+    /// The number being edited stays separate from the applied setting so an
+    /// Apply click in a later frame does not recreate the old value.
+    pub minimum_liked_draft: Option<u16>,
+    /// Rejects a slow answer after the time window changed or a reload.
+    pub generation: u64,
+    /// Changes whenever the rows or their local filters change.
+    pub revision: u64,
+}
+
 pub const DISCOVER_TERMS: &[&str] = &["Discover Weekly", "Release Radar", "Daily Mix", "daylist"];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -960,6 +979,12 @@ pub enum Action {
     Search(String),
     ForgetSearch(String),
     SetSearchFilter(SearchFilter),
+    SetNewReleasesDays(u16),
+    ToggleNewReleaseArtistSource(crate::settings::ReleaseArtistSource),
+    SetNewReleasesMinimumLikedTracks(u16),
+    ToggleNewReleaseGroup(crate::settings::ReleaseGroup),
+    SetNewReleasesHideRemixes(bool),
+    SetNewReleasesHideDuplicates(bool),
     FocusSearch,
     LoadMore(Page),
     LoadWindow {

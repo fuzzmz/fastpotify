@@ -7,8 +7,8 @@
 //! idle when nothing is happening.
 
 use std::collections::{HashSet, VecDeque};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use librespot_core::authentication::Credentials;
 use tokio::sync::{mpsc, watch};
@@ -99,6 +99,13 @@ pub enum RecentsFor {
 #[derive(Clone, Debug)]
 pub enum ApiRequest {
     Me,
+    NewReleases {
+        days: u16,
+        artist_sources: Vec<crate::settings::ReleaseArtistSource>,
+        minimum_liked_tracks: u16,
+        force_refresh: bool,
+        generation: u64,
+    },
     Devices,
     PlaybackState {
         seq: u64,
@@ -306,7 +313,8 @@ impl ApiRequest {
     fn background(&self) -> bool {
         matches!(
             self,
-            Self::PlaybackState { .. }
+            Self::NewReleases { .. }
+                | Self::PlaybackState { .. }
                 | Self::RecentlyPlayed { .. }
                 | Self::TopTracks { .. }
                 | Self::TopArtists { .. }
@@ -322,6 +330,10 @@ impl ApiRequest {
 #[derive(Debug)]
 pub enum ApiResponse {
     Me(ApiResult<User>),
+    NewReleases {
+        generation: u64,
+        result: ApiResult<Vec<Album>>,
+    },
     Devices(ApiResult<Vec<Device>>),
     PlaybackState {
         seq: u64,
@@ -725,6 +737,16 @@ pub enum Event {
     },
     Local(Box<LocalState>),
     Api(Box<ApiResponse>),
+    NewReleasesProgress {
+        generation: u64,
+        progress: crate::api::ReleaseScanProgress,
+    },
+    NewReleasesCache {
+        account_id: String,
+        generation: u64,
+        releases: Vec<Album>,
+        refreshing: bool,
+    },
     Accent {
         url: String,
         color: [u8; 3],
@@ -1226,6 +1248,10 @@ struct Worker {
     http: Http,
     api: Arc<ApiGateway>,
     background_api: Arc<tokio::sync::Semaphore>,
+    /// Only the newest release scan matters. Changing a source or period
+    /// aborts the old fan-out instead of letting both scans compete for the
+    /// Spotify rate limit.
+    new_releases_task: Mutex<Option<tokio::task::AbortHandle>>,
     art: ArtLoader,
     events: std::sync::mpsc::Sender<Event>,
     commands: mpsc::UnboundedSender<Command>,
@@ -1290,6 +1316,7 @@ impl Worker {
             web_client_id,
             api: Arc::new(ApiGateway::new(http.clone(), activity)),
             background_api: Arc::new(tokio::sync::Semaphore::new(4)),
+            new_releases_task: Mutex::new(None),
             http,
             art,
             events,
@@ -2992,11 +3019,30 @@ impl Worker {
         let background_api = Arc::clone(&self.background_api);
         let background = request.background();
         let engine = self.engine.clone();
+        let new_releases = matches!(&request, ApiRequest::NewReleases { .. });
+        let events = self.events.clone();
+        let waker = self.waker.clone();
         let commands = self.commands.clone();
+        let release_cache = NewReleasesCacheRequest::for_request(&self.dirs, &api, &request);
+        let release_progress = match &request {
+            ApiRequest::NewReleases { generation, .. } => {
+                let generation = *generation;
+                let events = events.clone();
+                let waker = waker.clone();
+                Some(Arc::new(move |progress| {
+                    let _ = events.send(Event::NewReleasesProgress {
+                        generation,
+                        progress,
+                    });
+                    waker.wake();
+                }) as crate::api::ReleaseProgressSink)
+            }
+            _ => None,
+        };
         let mut session = self.session.subscribe();
         let generation = *session.borrow_and_update();
-        tokio::spawn(async move {
-            let (response, expired) = tokio::select! {
+        let task = tokio::spawn(async move {
+            let completed = tokio::select! {
                 _ = session.changed() => return,
                 result = async {
                     let _background_permit = if background {
@@ -3004,8 +3050,50 @@ impl Worker {
                     } else {
                         None
                     };
-                    handle(&api, engine.as_deref(), request).await
+                    if let Some(cache) = &release_cache {
+                        match read_new_releases_cache(&cache.path).await {
+                            Ok(Some(cached)) if cached.is_usable(unix_seconds()) => {
+                                let refreshing =
+                                    cache.force_refresh || !cached.is_fresh(unix_seconds());
+                                let _ = events.send(Event::NewReleasesCache {
+                                    account_id: cache.account_id.clone(),
+                                    generation: cache.generation,
+                                    releases: cached.releases,
+                                    refreshing,
+                                });
+                                waker.wake();
+                                if !refreshing {
+                                    return None;
+                                }
+                            }
+                            Ok(_) => {}
+                            Err(error) => log::warn!(
+                                "unable to read New releases cache {}: {error}",
+                                cache.path.display()
+                            ),
+                        }
+                    }
+                    let (response, expired) =
+                        handle(&api, engine.as_deref(), request, release_progress).await;
+                    if let (
+                        Some(cache),
+                        ApiResponse::NewReleases {
+                            result: Ok(releases),
+                            ..
+                        },
+                    ) = (&release_cache, &response)
+                        && let Err(error) = write_new_releases_cache(&cache.path, releases).await
+                    {
+                        log::warn!(
+                            "unable to store New releases cache {}: {error}",
+                            cache.path.display()
+                        );
+                    }
+                    Some((response, expired))
                 } => result,
+            };
+            let Some((response, expired)) = completed else {
+                return;
             };
             // Apply completion on the command loop. A late response cannot
             // clear or repopulate a session created after sign-out.
@@ -3016,8 +3104,18 @@ impl Worker {
                 shared_lease,
                 personal_lease,
             });
-        })
-        .abort_handle()
+        });
+        let abort_handle = task.abort_handle();
+        if new_releases {
+            let mut held = self
+                .new_releases_task
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(previous) = held.replace(abort_handle.clone()) {
+                previous.abort();
+            }
+        }
+        abort_handle
     }
 
     fn accent(&self, url: String) {
@@ -3056,6 +3154,7 @@ fn friendly_connect_error(error: &anyhow::Error) -> String {
 fn operation_for(api: &ApiGateway, request: &ApiRequest) -> Operation {
     match request {
         ApiRequest::Me => Operation::CanonicalAccount,
+        ApiRequest::NewReleases { .. } => Operation::UserData,
         ApiRequest::Devices
         | ApiRequest::PlaybackState { .. }
         | ApiRequest::Queue { .. }
@@ -3183,6 +3282,7 @@ async fn handle(
     api: &ApiGateway,
     engine: Option<&Engine>,
     request: ApiRequest,
+    release_progress: Option<crate::api::ReleaseProgressSink>,
 ) -> (ApiResponse, Option<ApiSource>) {
     let operation = operation_for(api, &request);
     // A session whose long-lived connection has dropped still answers over
@@ -3214,6 +3314,21 @@ async fn handle(
 
     let response = match request {
         ApiRequest::Me => ApiResponse::Me(routed!(me())),
+        ApiRequest::NewReleases {
+            days,
+            artist_sources,
+            minimum_liked_tracks,
+            force_refresh: _,
+            generation,
+        } => ApiResponse::NewReleases {
+            generation,
+            result: routed!(new_releases(
+                days,
+                &artist_sources,
+                minimum_liked_tracks,
+                release_progress
+            )),
+        },
         ApiRequest::Devices => ApiResponse::Devices(routed!(devices())),
         ApiRequest::PlaybackState { seq } => ApiResponse::PlaybackState {
             seq,
@@ -3711,6 +3826,109 @@ async fn spotify_lyrics(
     }
 }
 
+const NEW_RELEASES_CACHE_FRESH_SECONDS: u64 = 30 * 60;
+const NEW_RELEASES_CACHE_MAX_AGE_SECONDS: u64 = 7 * 24 * 60 * 60;
+
+struct NewReleasesCacheRequest {
+    account_id: String,
+    generation: u64,
+    force_refresh: bool,
+    path: std::path::PathBuf,
+}
+
+impl NewReleasesCacheRequest {
+    fn for_request(dirs: &AppDirs, api: &ApiGateway, request: &ApiRequest) -> Option<Self> {
+        let ApiRequest::NewReleases {
+            days,
+            artist_sources,
+            minimum_liked_tracks,
+            force_refresh,
+            generation,
+        } = request
+        else {
+            return None;
+        };
+        let account_id = api.account()?.as_str().to_string();
+        let source_mask = artist_sources.iter().fold(0_u8, |mask, source| {
+            mask | match source {
+                crate::settings::ReleaseArtistSource::FollowedArtists => 1,
+                crate::settings::ReleaseArtistSource::SavedAlbums => 2,
+                crate::settings::ReleaseArtistSource::LikedSongs => 4,
+            }
+        });
+        let path = dirs
+            .account_new_releases_cache_dir(&account_id)
+            .join(format!(
+                "days-{days}-sources-{source_mask}-liked-{minimum_liked_tracks}.json"
+            ));
+        Some(Self {
+            account_id,
+            generation: *generation,
+            force_refresh: *force_refresh,
+            path,
+        })
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CachedNewReleases {
+    saved_at: u64,
+    releases: Vec<Album>,
+}
+
+impl CachedNewReleases {
+    fn age(&self, now: u64) -> Option<u64> {
+        now.checked_sub(self.saved_at)
+    }
+
+    fn is_fresh(&self, now: u64) -> bool {
+        self.age(now)
+            .is_some_and(|age| age <= NEW_RELEASES_CACHE_FRESH_SECONDS)
+    }
+
+    fn is_usable(&self, now: u64) -> bool {
+        self.age(now)
+            .is_some_and(|age| age <= NEW_RELEASES_CACHE_MAX_AGE_SECONDS)
+    }
+}
+
+fn unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+async fn read_new_releases_cache(
+    path: &std::path::Path,
+) -> std::io::Result<Option<CachedNewReleases>> {
+    let bytes = match tokio::fs::read(path).await {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+}
+
+async fn write_new_releases_cache(
+    path: &std::path::Path,
+    releases: &[Album],
+) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let cache = CachedNewReleases {
+        saved_at: unix_seconds(),
+        releases: releases.to_vec(),
+    };
+    let text = serde_json::to_vec(&cache).map_err(std::io::Error::other)?;
+    let temporary = path.with_extension("json.tmp");
+    tokio::fs::write(&temporary, text).await?;
+    crate::util::replace_file(&temporary, path)
+}
+
 /// A playlist's items on disk, valid for exactly one snapshot.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct CachedPlaylist {
@@ -3889,8 +4107,48 @@ mod album_type_lookup_tests {
 
 #[cfg(test)]
 mod playlist_cache_tests {
-    use super::{CachedPlaylist, read_cached_playlist, write_cached_playlist};
-    use crate::api::models::{PlayableItem, PlaylistItem, Track};
+    use super::{
+        CachedNewReleases, CachedPlaylist, NEW_RELEASES_CACHE_FRESH_SECONDS,
+        NEW_RELEASES_CACHE_MAX_AGE_SECONDS, read_cached_playlist, read_new_releases_cache,
+        write_cached_playlist, write_new_releases_cache,
+    };
+    use crate::api::models::{Album, PlayableItem, PlaylistItem, Track};
+
+    #[test]
+    fn release_cache_has_a_short_fresh_window_and_a_bounded_stale_window() {
+        let cache = CachedNewReleases {
+            saved_at: 1_000,
+            releases: Vec::new(),
+        };
+
+        assert!(cache.is_fresh(1_000 + NEW_RELEASES_CACHE_FRESH_SECONDS));
+        assert!(!cache.is_fresh(1_001 + NEW_RELEASES_CACHE_FRESH_SECONDS));
+        assert!(cache.is_usable(1_000 + NEW_RELEASES_CACHE_MAX_AGE_SECONDS));
+        assert!(!cache.is_usable(1_001 + NEW_RELEASES_CACHE_MAX_AGE_SECONDS));
+        assert!(!cache.is_usable(999), "future timestamps are not trusted");
+    }
+
+    #[tokio::test]
+    async fn new_release_results_round_trip_through_the_disk_cache() {
+        let root = std::env::temp_dir().join(format!(
+            "spotifast-release-cache-test-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let path = root.join("nested").join("releases.json");
+        let releases = vec![Album {
+            id: "release-id".into(),
+            name: "Cached release".into(),
+            ..Album::default()
+        }];
+
+        write_new_releases_cache(&path, &releases).await.unwrap();
+        let restored = read_new_releases_cache(&path).await.unwrap().unwrap();
+
+        assert_eq!(restored.releases, releases);
+        assert!(!path.with_extension("json.tmp").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     #[test]
     fn the_original_complete_cache_format_remains_readable() {

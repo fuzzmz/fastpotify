@@ -305,6 +305,7 @@ pub struct App {
     liked_songs: crate::liked::LikedSongs,
     liked_recheck_at: Option<Instant>,
     pub home: HomeData,
+    pub new_releases: NewReleasesData,
     /// Local play history. See [`crate::history`].
     pub plays: crate::history::History,
     /// Current track timing used to decide when a play counts.
@@ -696,6 +697,7 @@ impl App {
             liked_songs: crate::liked::LikedSongs::default(),
             liked_recheck_at: None,
             home: HomeData::default(),
+            new_releases: NewReleasesData::default(),
             plays,
             listening: None,
             recents: crate::model::CursorList::default(),
@@ -1721,6 +1723,31 @@ impl App {
                 }
                 Event::Local(state) => self.handle_local(*state),
                 Event::Api(response) => self.handle_api(*response),
+                Event::NewReleasesProgress {
+                    generation,
+                    progress,
+                } => {
+                    if generation == self.new_releases.generation {
+                        self.new_releases.refreshing = true;
+                        self.new_releases.progress = Some(progress);
+                    }
+                }
+                Event::NewReleasesCache {
+                    account_id,
+                    generation,
+                    releases,
+                    refreshing,
+                } => {
+                    if self.user_id() == Some(account_id.as_str())
+                        && generation == self.new_releases.generation
+                    {
+                        self.install_new_releases(releases);
+                        self.new_releases.refreshing = refreshing;
+                        if !refreshing {
+                            self.new_releases.progress = None;
+                        }
+                    }
+                }
                 Event::Accent { url, color } => {
                     self.accent_pending.remove(&url);
                     let tint = self.palette.tint_from_art(color);
@@ -1941,6 +1968,7 @@ impl App {
         self.liked_songs = crate::liked::LikedSongs::default();
         self.liked_recheck_at = None;
         self.home = HomeData::default();
+        self.new_releases = NewReleasesData::default();
         self.playlist_pages.clear();
         self.album_pages.clear();
         self.artist_pages.clear();
@@ -1978,7 +2006,7 @@ impl App {
                 || match page {
                     Page::Playlist(id) => self.playlist_pages.contains_key(id),
                     Page::Album(id) => self.album_pages.contains_key(id),
-                    Page::LikedSongs | Page::TopSongs => true,
+                    Page::LikedSongs | Page::TopSongs | Page::NewReleases => true,
                     _ => false,
                 }
         });
@@ -3331,6 +3359,11 @@ impl App {
         }
         match page {
             Page::Home => self.load_home(false),
+            Page::NewReleases => {
+                if self.new_releases.releases.needs_load() {
+                    self.load_new_releases(false);
+                }
+            }
             Page::TopSongs => self.load_top_songs(false),
             Page::Search => {}
             Page::LikedSongs => self.ensure_liked_songs(),
@@ -3437,6 +3470,40 @@ impl App {
             Page::Queue => self.refresh_queue(true),
             Page::Settings => {}
         }
+    }
+
+    fn load_new_releases(&mut self, force_refresh: bool) {
+        self.new_releases.generation = self.new_releases.generation.wrapping_add(1);
+        let generation = self.new_releases.generation;
+        if !force_refresh || self.new_releases.releases.get().is_none() {
+            self.new_releases.releases = Loadable::Loading;
+            self.table_rows.remove(&Page::NewReleases);
+        }
+        self.new_releases.refreshing = true;
+        self.new_releases.progress = None;
+        self.backend.api(ApiRequest::NewReleases {
+            days: self.settings.new_releases_days.max(1),
+            artist_sources: self.settings.new_releases_artist_sources.clone(),
+            minimum_liked_tracks: self.settings.new_releases_minimum_liked_tracks.max(1),
+            force_refresh,
+            generation,
+        });
+    }
+
+    fn install_new_releases(&mut self, releases: Vec<Album>) {
+        let mut uris = Vec::new();
+        for album in &releases {
+            if let Some(tracks) = &album.tracks {
+                for track in &tracks.items {
+                    uris.push(track.uri.clone());
+                    self.remember_track_recording(track);
+                }
+            }
+        }
+        self.new_releases.releases = Loadable::Loaded(releases);
+        self.new_releases.revision = self.new_releases.revision.wrapping_add(1);
+        self.table_rows.remove(&Page::NewReleases);
+        self.request_contains(uris);
     }
 
     fn load_artist_albums(&mut self, id: &str, filter: DiscographyFilter) {
@@ -3781,6 +3848,7 @@ impl App {
     fn reload(&mut self, page: Page) {
         match &page {
             Page::Home => self.load_home(true),
+            Page::NewReleases => self.load_new_releases(true),
             Page::TopSongs => self.load_top_songs(true),
             Page::LikedSongs => {
                 self.refresh_liked_songs();
@@ -4495,6 +4563,24 @@ impl App {
                     }
                 }
             },
+            ApiResponse::NewReleases { generation, result } => {
+                if generation != self.new_releases.generation {
+                    return;
+                }
+                self.new_releases.refreshing = false;
+                self.new_releases.progress = None;
+                match result {
+                    Ok(releases) => self.install_new_releases(releases),
+                    Err(error) if self.new_releases.releases.get().is_some() => {
+                        log::warn!("unable to refresh New releases: {error}");
+                    }
+                    Err(error) => {
+                        self.new_releases.releases = Loadable::Failed(error.to_string());
+                        self.new_releases.revision = self.new_releases.revision.wrapping_add(1);
+                        self.table_rows.remove(&Page::NewReleases);
+                    }
+                }
+            }
             ApiResponse::Devices(result) => {
                 self.devices_loading = false;
                 self.devices_fetched_at = Some(Instant::now());
@@ -7873,6 +7959,84 @@ impl App {
                 self.settings_dirty = true;
             }
             Action::SetSearchFilter(filter) => self.search.filter = filter,
+            Action::SetNewReleasesDays(days) => {
+                let days = days.max(1);
+                if self.settings.new_releases_days != days {
+                    self.settings.new_releases_days = days;
+                    self.settings_dirty = true;
+                    self.load_new_releases(false);
+                }
+            }
+            Action::ToggleNewReleaseArtistSource(source) => {
+                let sources = &mut self.settings.new_releases_artist_sources;
+                let changed = if let Some(index) = sources.iter().position(|held| *held == source) {
+                    if sources.len() == 1 {
+                        false
+                    } else {
+                        sources.remove(index);
+                        true
+                    }
+                } else {
+                    sources.push(source);
+                    sources.sort_by_key(|source| {
+                        crate::settings::ReleaseArtistSource::ALL
+                            .iter()
+                            .position(|candidate| candidate == source)
+                            .unwrap_or(usize::MAX)
+                    });
+                    true
+                };
+                if changed {
+                    self.settings_dirty = true;
+                    self.load_new_releases(false);
+                    self.clear_picked_rows();
+                }
+            }
+            Action::SetNewReleasesMinimumLikedTracks(minimum) => {
+                let minimum = minimum.max(1);
+                if self.settings.new_releases_minimum_liked_tracks != minimum {
+                    self.settings.new_releases_minimum_liked_tracks = minimum;
+                    self.settings_dirty = true;
+                    self.load_new_releases(false);
+                    self.clear_picked_rows();
+                }
+            }
+            Action::ToggleNewReleaseGroup(group) => {
+                let groups = &mut self.settings.new_releases_groups;
+                if let Some(index) = groups.iter().position(|held| *held == group) {
+                    groups.remove(index);
+                } else {
+                    groups.push(group);
+                    groups.sort_by_key(|group| {
+                        crate::settings::ReleaseGroup::ALL
+                            .iter()
+                            .position(|candidate| candidate == group)
+                            .unwrap_or(usize::MAX)
+                    });
+                }
+                self.settings_dirty = true;
+                self.new_releases.revision = self.new_releases.revision.wrapping_add(1);
+                self.table_rows.remove(&Page::NewReleases);
+                self.clear_picked_rows();
+            }
+            Action::SetNewReleasesHideRemixes(hide) => {
+                if self.settings.new_releases_hide_remixes != hide {
+                    self.settings.new_releases_hide_remixes = hide;
+                    self.settings_dirty = true;
+                    self.new_releases.revision = self.new_releases.revision.wrapping_add(1);
+                    self.table_rows.remove(&Page::NewReleases);
+                    self.clear_picked_rows();
+                }
+            }
+            Action::SetNewReleasesHideDuplicates(hide) => {
+                if self.settings.new_releases_hide_duplicates != hide {
+                    self.settings.new_releases_hide_duplicates = hide;
+                    self.settings_dirty = true;
+                    self.new_releases.revision = self.new_releases.revision.wrapping_add(1);
+                    self.table_rows.remove(&Page::NewReleases);
+                    self.clear_picked_rows();
+                }
+            }
             Action::FocusSearch => {
                 self.search.focus_requested = true;
                 if !matches!(self.page(), Page::Search) {
@@ -15206,6 +15370,101 @@ mod tests {
         });
         app.request_album_types([&ep]);
         assert_eq!(app.backend.take_album_type_requests(), vec![vec![ep.uri]]);
+    }
+
+    #[test]
+    fn new_release_artist_sources_never_become_empty() {
+        use crate::settings::ReleaseArtistSource;
+
+        let mut app = headless_app();
+        let ctx = egui::Context::default();
+        app.actions.push(Action::ToggleNewReleaseArtistSource(
+            ReleaseArtistSource::FollowedArtists,
+        ));
+        app.apply_actions(&ctx);
+        assert_eq!(
+            app.settings.new_releases_artist_sources,
+            [ReleaseArtistSource::FollowedArtists]
+        );
+
+        app.actions.push(Action::ToggleNewReleaseArtistSource(
+            ReleaseArtistSource::SavedAlbums,
+        ));
+        app.apply_actions(&ctx);
+        app.actions.push(Action::ToggleNewReleaseArtistSource(
+            ReleaseArtistSource::FollowedArtists,
+        ));
+        app.apply_actions(&ctx);
+        assert_eq!(
+            app.settings.new_releases_artist_sources,
+            [ReleaseArtistSource::SavedAlbums]
+        );
+    }
+
+    #[test]
+    fn new_release_liked_song_threshold_is_at_least_one() {
+        let mut app = headless_app();
+        let ctx = egui::Context::default();
+        app.settings.new_releases_minimum_liked_tracks = 5;
+        app.actions
+            .push(Action::SetNewReleasesMinimumLikedTracks(0));
+        app.apply_actions(&ctx);
+        assert_eq!(app.settings.new_releases_minimum_liked_tracks, 1);
+    }
+
+    #[test]
+    fn cached_new_releases_stay_visible_during_and_after_a_failed_refresh() {
+        let mut app = headless_app();
+        app.user = Some(User {
+            id: "listener".into(),
+            ..User::default()
+        });
+        app.new_releases.generation = 7;
+        app.new_releases.releases = Loadable::Loading;
+        app.new_releases.refreshing = true;
+        let cached = Album {
+            id: "cached-release".into(),
+            ..Album::default()
+        };
+
+        app.handle_backend_events(vec![Event::NewReleasesCache {
+            account_id: "listener".into(),
+            generation: 7,
+            releases: vec![cached],
+            refreshing: true,
+        }]);
+        assert_eq!(
+            app.new_releases.releases.get().unwrap()[0].id,
+            "cached-release"
+        );
+
+        let progress = crate::api::ReleaseScanProgress {
+            phase: crate::api::ReleaseScanPhase::ScanningArtists,
+            completed: 4,
+            total: 10,
+            found_releases: 2,
+        };
+        app.handle_backend_events(vec![Event::NewReleasesProgress {
+            generation: 6,
+            progress,
+        }]);
+        assert_eq!(app.new_releases.progress, None, "stale scan progress");
+        app.handle_backend_events(vec![Event::NewReleasesProgress {
+            generation: 7,
+            progress,
+        }]);
+        assert_eq!(app.new_releases.progress, Some(progress));
+
+        app.handle_api(ApiResponse::NewReleases {
+            generation: 7,
+            result: Err(crate::api::ApiError::Network("offline".into())),
+        });
+        assert_eq!(
+            app.new_releases.releases.get().unwrap()[0].id,
+            "cached-release"
+        );
+        assert!(!app.new_releases.refreshing);
+        assert_eq!(app.new_releases.progress, None);
     }
 
     #[test]

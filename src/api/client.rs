@@ -4,7 +4,7 @@
 //! concurrency, honors `Retry-After`, and formats API errors. The gateway
 //! handles capability differences before dispatch.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -15,6 +15,8 @@ use serde_json::{Value, json};
 use thiserror::Error;
 use tokio::sync::Semaphore;
 
+use crate::settings::ReleaseArtistSource;
+
 use super::ApiSource;
 use super::models::*;
 use crate::http::Http;
@@ -23,6 +25,9 @@ const BASE_URL: &str = "https://api.spotify.com/v1";
 const MAX_IN_FLIGHT: usize = 6;
 const RATE_LIMIT_RETRIES: u32 = 3;
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(30);
+const RELEASE_ALBUM_BATCH: usize = 20;
+const RELEASE_ARTIST_WORKERS: usize = 2;
+const RELEASE_LIBRARY_PAGE: u32 = 50;
 
 #[derive(Clone, Debug, Error)]
 pub enum ApiError {
@@ -62,6 +67,23 @@ impl From<reqwest::Error> for ApiError {
 }
 
 pub type Result<T> = std::result::Result<T, ApiError>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReleaseScanPhase {
+    CollectingArtists,
+    ScanningArtists,
+    LoadingTracks,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReleaseScanProgress {
+    pub phase: ReleaseScanPhase,
+    pub completed: usize,
+    pub total: usize,
+    pub found_releases: usize,
+}
+
+pub type ReleaseProgressSink = Arc<dyn Fn(ReleaseScanProgress) + Send + Sync>;
 
 fn is_quota_exhausted(body: &str) -> bool {
     serde_json::from_str::<ApiErrorBody>(body)
@@ -427,12 +449,15 @@ impl ApiClient {
         let queue_write = method == Method::POST && path == "/me/player/queue";
         loop {
             attempt = u32::saturating_add(attempt, 1);
-            self.wait_for_cooldown().await;
             let permit = self
                 .limiter
                 .acquire()
                 .await
                 .map_err(|_| ApiError::NotSignedIn)?;
+            // Recheck the shared cooldown only after entering the bounded
+            // request set. Otherwise every queued request wakes together and
+            // can pass this check before the first 429 extends the cooldown.
+            self.wait_for_cooldown().await;
             let token = provider.access_token().await?;
             let mut request = self
                 .http
@@ -991,6 +1016,248 @@ impl ApiClient {
         Ok(followed.artists)
     }
 
+    /// Recent releases from artists selected through the user's library.
+    ///
+    /// Spotify exposes this as a fan-out rather than one feed: collect and
+    /// deduplicate artists from the enabled sources, inspect each discography,
+    /// then hydrate recent albums in batches. The client's limiter keeps all
+    /// of that work within the ordinary concurrency and Retry-After rules.
+    pub async fn new_releases(
+        self: &Arc<Self>,
+        days: u16,
+        artist_sources: &[ReleaseArtistSource],
+        minimum_liked_tracks: u16,
+        progress: Option<ReleaseProgressSink>,
+    ) -> Result<Vec<Album>> {
+        report_release_progress(&progress, ReleaseScanPhase::CollectingArtists, 0, 0, 0);
+        let now = jiff::Timestamp::now();
+        let cutoff = release_cutoff(days, now);
+        let tomorrow = (now + jiff::SignedDuration::from_hours(24))
+            .strftime("%Y-%m-%d")
+            .to_string();
+
+        let followed = artist_sources.contains(&ReleaseArtistSource::FollowedArtists);
+        let saved_albums = artist_sources.contains(&ReleaseArtistSource::SavedAlbums);
+        let liked_songs = artist_sources.contains(&ReleaseArtistSource::LikedSongs);
+        let (followed_ids, saved_album_ids, liked_song_ids) = tokio::try_join!(
+            async {
+                if followed {
+                    self.followed_release_artist_ids().await
+                } else {
+                    Ok::<_, ApiError>(HashSet::new())
+                }
+            },
+            async {
+                if saved_albums {
+                    self.saved_album_release_artist_ids().await
+                } else {
+                    Ok::<_, ApiError>(HashSet::new())
+                }
+            },
+            async {
+                if liked_songs {
+                    self.liked_song_release_artist_ids(minimum_liked_tracks)
+                        .await
+                } else {
+                    Ok::<_, ApiError>(HashSet::new())
+                }
+            }
+        )?;
+        let mut artist_ids = followed_ids;
+        artist_ids.extend(saved_album_ids);
+        artist_ids.extend(liked_song_ids);
+        let mut artist_ids: Vec<String> = artist_ids.into_iter().collect();
+        artist_ids.sort_unstable();
+        let artist_total = artist_ids.len();
+        report_release_progress(
+            &progress,
+            ReleaseScanPhase::ScanningArtists,
+            0,
+            artist_total,
+            0,
+        );
+
+        let mut artist_ids = artist_ids.into_iter();
+        let mut workers = tokio::task::JoinSet::new();
+        for artist_id in artist_ids.by_ref().take(RELEASE_ARTIST_WORKERS) {
+            spawn_release_artist_worker(
+                &mut workers,
+                Arc::clone(self),
+                artist_id,
+                cutoff.clone(),
+                tomorrow.clone(),
+            );
+        }
+
+        let mut releases = HashMap::<String, MatchedRelease>::new();
+        let mut artists_scanned = 0;
+        while let Some(result) = workers.join_next().await {
+            let (artist_id, albums) = result
+                .map_err(|error| ApiError::Network(format!("release worker stopped: {error}")))??;
+            for album in albums {
+                add_matched_release(&mut releases, &artist_id, album);
+            }
+            artists_scanned += 1;
+            report_release_progress(
+                &progress,
+                ReleaseScanPhase::ScanningArtists,
+                artists_scanned,
+                artist_total,
+                releases.len(),
+            );
+            if let Some(artist_id) = artist_ids.next() {
+                spawn_release_artist_worker(
+                    &mut workers,
+                    Arc::clone(self),
+                    artist_id,
+                    cutoff.clone(),
+                    tomorrow.clone(),
+                );
+            }
+        }
+
+        let ids: Vec<String> = releases.keys().cloned().collect();
+        let release_total = ids.len();
+        report_release_progress(
+            &progress,
+            ReleaseScanPhase::LoadingTracks,
+            0,
+            release_total,
+            release_total,
+        );
+        let mut hydrated = Vec::with_capacity(ids.len());
+        let mut releases_loaded = 0;
+        for ids in ids.chunks(RELEASE_ALBUM_BATCH) {
+            let list = self.albums(ids).await?;
+            let missing = ids.len().saturating_sub(list.len());
+            for mut album in list {
+                let Some(release) = releases.get(&album.id) else {
+                    continue;
+                };
+                album.album_group.clone_from(&release.album.album_group);
+                let artist_ids = release.artist_ids.clone();
+                self.complete_album_tracks(&mut album).await?;
+                retain_matching_release_tracks(&mut album, &artist_ids);
+                if album
+                    .tracks
+                    .as_ref()
+                    .is_some_and(|tracks| !tracks.items.is_empty())
+                {
+                    hydrated.push(album);
+                }
+                releases_loaded += 1;
+                report_release_progress(
+                    &progress,
+                    ReleaseScanPhase::LoadingTracks,
+                    releases_loaded,
+                    release_total,
+                    release_total,
+                );
+            }
+            releases_loaded += missing;
+        }
+        hydrated.sort_by(release_order);
+        Ok(hydrated)
+    }
+
+    async fn followed_release_artist_ids(&self) -> Result<HashSet<String>> {
+        let mut artists = HashSet::new();
+        let mut after = None;
+        loop {
+            let page = self.followed_artists(after.as_deref(), 50).await?;
+            let received = page.items.len();
+            artists.extend(
+                page.items
+                    .into_iter()
+                    .map(|artist| artist.id)
+                    .filter(|id| !id.is_empty()),
+            );
+            let next = page.cursors.and_then(|cursors| cursors.after);
+            if next.is_none() || next == after || received == 0 {
+                break;
+            }
+            after = next;
+        }
+        Ok(artists)
+    }
+
+    async fn saved_album_release_artist_ids(self: &Arc<Self>) -> Result<HashSet<String>> {
+        let first = self.saved_albums(0, RELEASE_LIBRARY_PAGE).await?;
+        let mut artists = HashSet::new();
+        add_saved_album_artist_ids(&mut artists, &first.items);
+
+        let mut workers = tokio::task::JoinSet::new();
+        let page_size = first.limit.max(first.items.len() as u32).max(1);
+        if let Some(first_offset) = first.next_offset() {
+            for offset in (first_offset..first.total).step_by(page_size as usize) {
+                let client = Arc::clone(self);
+                workers.spawn(async move { client.saved_albums(offset, page_size).await });
+            }
+        }
+        while let Some(result) = workers.join_next().await {
+            let page = result.map_err(|error| {
+                ApiError::Network(format!("saved-album worker stopped: {error}"))
+            })??;
+            add_saved_album_artist_ids(&mut artists, &page.items);
+        }
+        Ok(artists)
+    }
+
+    async fn liked_song_release_artist_ids(
+        self: &Arc<Self>,
+        minimum_liked_tracks: u16,
+    ) -> Result<HashSet<String>> {
+        let first = self.saved_tracks(0, RELEASE_LIBRARY_PAGE).await?;
+        let mut counts = HashMap::new();
+        count_liked_track_artists(&mut counts, &first.items);
+
+        let mut workers = tokio::task::JoinSet::new();
+        let page_size = first.limit.max(first.items.len() as u32).max(1);
+        if let Some(first_offset) = first.next_offset() {
+            for offset in (first_offset..first.total).step_by(page_size as usize) {
+                let client = Arc::clone(self);
+                workers.spawn(async move { client.saved_tracks(offset, page_size).await });
+            }
+        }
+        while let Some(result) = workers.join_next().await {
+            let page = result.map_err(|error| {
+                ApiError::Network(format!("liked-song worker stopped: {error}"))
+            })??;
+            count_liked_track_artists(&mut counts, &page.items);
+        }
+        Ok(qualified_liked_artist_ids(
+            counts,
+            minimum_liked_tracks.max(1),
+        ))
+    }
+
+    async fn recent_artist_albums(
+        &self,
+        artist_id: &str,
+        cutoff: &str,
+        tomorrow: &str,
+    ) -> Result<Vec<Album>> {
+        let mut releases = Vec::new();
+        let mut offset = 0;
+        loop {
+            let page = self
+                .artist_albums(artist_id, "album,single,compilation,appears_on", offset, 50)
+                .await?;
+            let next = page.next_offset();
+            releases.extend(page.items.into_iter().filter(|album| {
+                album
+                    .release_date
+                    .as_deref()
+                    .is_some_and(|date| date >= cutoff && date <= tomorrow)
+            }));
+            let Some(next) = next.filter(|next| *next > offset) else {
+                break;
+            };
+            offset = next;
+        }
+        Ok(releases)
+    }
+
     pub async fn saved_shows(&self, offset: u32, limit: u32) -> Result<Page<SavedShow>> {
         self.get(
             "/me/shows",
@@ -1110,6 +1377,35 @@ impl ApiClient {
         self.get(&format!("/albums/{id}"), &[]).await
     }
 
+    pub async fn albums(&self, ids: &[String]) -> Result<Vec<Album>> {
+        let albums: Albums = self.get("/albums", &[("ids", ids.join(","))]).await?;
+        Ok(albums.albums)
+    }
+
+    async fn complete_album_tracks(&self, album: &mut Album) -> Result<()> {
+        let mut tracks = match album.tracks.take() {
+            Some(tracks) => tracks,
+            None => self.album_tracks(&album.id, 0, 50).await?,
+        };
+        let mut next = tracks.next_offset();
+        while let Some(offset) = next {
+            let page = self.album_tracks(&album.id, offset, 50).await?;
+            next = page.next_offset();
+            tracks.items.extend(page.items);
+            tracks.total = page.total;
+            tracks.limit = tracks.items.len() as u32;
+            tracks.next = page.next;
+        }
+
+        let mut summary = album.clone();
+        summary.tracks = None;
+        for track in &mut tracks.items {
+            track.album = Some(summary.clone());
+        }
+        album.tracks = Some(tracks);
+        Ok(())
+    }
+
     pub async fn album_tracks(&self, id: &str, offset: u32, limit: u32) -> Result<Page<Track>> {
         self.get::<PositionedPage<Track>>(
             &format!("/albums/{id}/tracks"),
@@ -1155,6 +1451,161 @@ impl ApiClient {
         let recommendations: Recommendations = self.get("/recommendations", &query).await?;
         Ok(recommendations.tracks)
     }
+}
+
+fn report_release_progress(
+    progress: &Option<ReleaseProgressSink>,
+    phase: ReleaseScanPhase,
+    completed: usize,
+    total: usize,
+    found_releases: usize,
+) {
+    if let Some(report) = progress {
+        report(ReleaseScanProgress {
+            phase,
+            completed,
+            total,
+            found_releases,
+        });
+    }
+}
+
+struct MatchedRelease {
+    album: Album,
+    artist_ids: HashSet<String>,
+}
+
+fn spawn_release_artist_worker(
+    workers: &mut tokio::task::JoinSet<Result<(String, Vec<Album>)>>,
+    client: Arc<ApiClient>,
+    artist_id: String,
+    cutoff: String,
+    tomorrow: String,
+) {
+    workers.spawn(async move {
+        let albums = client
+            .recent_artist_albums(&artist_id, &cutoff, &tomorrow)
+            .await?;
+        Ok((artist_id, albums))
+    });
+}
+
+fn add_matched_release(
+    releases: &mut HashMap<String, MatchedRelease>,
+    artist_id: &str,
+    album: Album,
+) {
+    if let Some(held) = releases.get_mut(&album.id) {
+        prefer_release_group(&mut held.album, &album);
+        held.artist_ids.insert(artist_id.to_string());
+    } else {
+        releases.insert(
+            album.id.clone(),
+            MatchedRelease {
+                album,
+                artist_ids: HashSet::from([artist_id.to_string()]),
+            },
+        );
+    }
+}
+
+fn retain_matching_release_tracks(album: &mut Album, artist_ids: &HashSet<String>) {
+    let Some(tracks) = album.tracks.as_mut() else {
+        return;
+    };
+    tracks.items.retain(|track| {
+        track
+            .artists
+            .iter()
+            .filter_map(|artist| artist.id.as_deref())
+            .any(|id| artist_ids.contains(id))
+    });
+    tracks.total = tracks.items.len() as u32;
+    tracks.limit = tracks.total;
+    tracks.offset = 0;
+    tracks.next = None;
+}
+
+fn add_saved_album_artist_ids(artists: &mut HashSet<String>, albums: &[SavedAlbum]) {
+    for saved in albums {
+        artists.extend(
+            saved
+                .album
+                .artists
+                .iter()
+                .filter_map(|artist| artist.id.as_deref())
+                .filter(|id| !id.is_empty())
+                .map(str::to_string),
+        );
+    }
+}
+
+fn count_liked_track_artists(counts: &mut HashMap<String, u32>, tracks: &[SavedTrack]) {
+    for saved in tracks {
+        for id in saved
+            .track
+            .artists
+            .iter()
+            .filter_map(|artist| artist.id.as_deref())
+            .filter(|id| !id.is_empty())
+        {
+            *counts.entry(id.to_string()).or_default() += 1;
+        }
+    }
+}
+
+fn qualified_liked_artist_ids(
+    counts: HashMap<String, u32>,
+    minimum_liked_tracks: u16,
+) -> HashSet<String> {
+    let minimum = u32::from(minimum_liked_tracks.max(1));
+    counts
+        .into_iter()
+        .filter_map(|(id, count)| (count >= minimum).then_some(id))
+        .collect()
+}
+
+fn release_cutoff(days: u16, now: jiff::Timestamp) -> String {
+    let hours = i64::from(days).saturating_mul(24);
+    (now - jiff::SignedDuration::from_hours(hours))
+        .strftime("%Y-%m-%d")
+        .to_string()
+}
+
+fn release_group_rank(group: Option<&str>) -> u8 {
+    match group {
+        Some("album") => 0,
+        Some("single") => 1,
+        Some("compilation") => 2,
+        Some("appears_on") => 3,
+        _ => 4,
+    }
+}
+
+fn prefer_release_group(held: &mut Album, candidate: &Album) {
+    if release_group_rank(candidate.album_group.as_deref())
+        < release_group_rank(held.album_group.as_deref())
+    {
+        held.album_group.clone_from(&candidate.album_group);
+    }
+}
+
+fn release_order(a: &Album, b: &Album) -> std::cmp::Ordering {
+    b.release_date
+        .cmp(&a.release_date)
+        .then_with(|| {
+            let artists = |album: &Album| {
+                album
+                    .artists
+                    .iter()
+                    .map(|artist| artist.name.to_lowercase())
+                    .collect::<Vec<_>>()
+                    .join("\0")
+            };
+            artists(a).cmp(&artists(b))
+        })
+        .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        .then_with(|| a.id.cmp(&b.id))
 }
 
 #[cfg(test)]
@@ -1471,5 +1922,126 @@ mod tests {
         shared.extend_cooldown(Duration::from_secs(10)).await;
         assert!(*shared.cooldown_until.lock().await > Instant::now());
         assert!(*personal.cooldown_until.lock().await <= Instant::now());
+    }
+
+    #[test]
+    fn release_cutoff_is_an_inclusive_calendar_date() {
+        let now: jiff::Timestamp = "2026-09-08T12:00:00Z".parse().unwrap();
+        assert_eq!(release_cutoff(30, now), "2026-08-09");
+    }
+
+    #[test]
+    fn a_primary_release_group_wins_over_an_appearance() {
+        let mut held = Album {
+            album_group: Some("appears_on".into()),
+            ..Album::default()
+        };
+        let candidate = Album {
+            album_group: Some("single".into()),
+            ..Album::default()
+        };
+        prefer_release_group(&mut held, &candidate);
+        assert_eq!(held.album_group.as_deref(), Some("single"));
+    }
+
+    #[test]
+    fn liked_song_artists_must_reach_the_configured_threshold() {
+        let artist = |id: &str| ArtistRef {
+            id: Some(id.into()),
+            ..ArtistRef::default()
+        };
+        let saved = |artists: Vec<ArtistRef>| SavedTrack {
+            track: Track {
+                artists,
+                ..Track::default()
+            },
+            ..SavedTrack::default()
+        };
+        let tracks = vec![
+            saved(vec![artist("main"), artist("guest")]),
+            saved(vec![artist("main")]),
+            saved(vec![artist("other")]),
+        ];
+        let mut counts = HashMap::new();
+        count_liked_track_artists(&mut counts, &tracks);
+
+        let artists = qualified_liked_artist_ids(counts, 2);
+        assert_eq!(artists, HashSet::from(["main".to_string()]));
+    }
+
+    #[test]
+    fn saved_albums_include_every_credited_artist_once() {
+        let album = SavedAlbum {
+            album: Album {
+                artists: vec![
+                    ArtistRef {
+                        id: Some("main".into()),
+                        ..ArtistRef::default()
+                    },
+                    ArtistRef {
+                        id: Some("guest".into()),
+                        ..ArtistRef::default()
+                    },
+                    ArtistRef {
+                        id: Some("main".into()),
+                        ..ArtistRef::default()
+                    },
+                ],
+                ..Album::default()
+            },
+            ..SavedAlbum::default()
+        };
+        let mut artists = HashSet::new();
+        add_saved_album_artist_ids(&mut artists, &[album]);
+
+        assert_eq!(
+            artists,
+            HashSet::from(["main".to_string(), "guest".to_string()])
+        );
+    }
+
+    #[test]
+    fn compilation_tracks_are_limited_to_the_selected_artists() {
+        let artist = |id: &str| ArtistRef {
+            id: Some(id.into()),
+            ..ArtistRef::default()
+        };
+        let track = |name: &str, artists: Vec<ArtistRef>| Track {
+            name: name.into(),
+            artists,
+            ..Track::default()
+        };
+        let mut album = Album {
+            tracks: Some(Page {
+                items: vec![
+                    track("selected solo", vec![artist("selected")]),
+                    track(
+                        "selected collaboration",
+                        vec![artist("other"), artist("selected")],
+                    ),
+                    track("unrelated", vec![artist("other")]),
+                ],
+                total: 3,
+                limit: 3,
+                next: Some("next page".into()),
+                ..Page::default()
+            }),
+            ..Album::default()
+        };
+
+        retain_matching_release_tracks(&mut album, &HashSet::from(["selected".to_string()]));
+
+        let tracks = album.tracks.unwrap();
+        assert_eq!(
+            tracks
+                .items
+                .iter()
+                .map(|track| track.name.as_str())
+                .collect::<Vec<_>>(),
+            ["selected solo", "selected collaboration"]
+        );
+        assert_eq!(tracks.total, 2);
+        assert_eq!(tracks.limit, 2);
+        assert!(tracks.next.is_none());
     }
 }
