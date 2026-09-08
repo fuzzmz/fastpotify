@@ -378,6 +378,7 @@ pub struct Table<'a> {
     pub show_album: bool,
     pub show_cover: bool,
     pub show_added: bool,
+    pub added_heading: &'a str,
     pub show_added_by: bool,
     pub page: Page,
     pub loading: bool,
@@ -582,7 +583,7 @@ pub fn table(app: &mut App, ui: &mut egui::Ui, table: Table<'_>) {
             &palette,
             app.locale,
             table.show_album,
-            table.show_added,
+            table.show_added.then_some(table.added_heading),
             table.show_added_by,
             show_cover,
             sort,
@@ -1341,6 +1342,7 @@ pub fn top_songs(app: &mut App, ui: &mut egui::Ui) {
             show_album: true,
             show_cover: true,
             show_added: false,
+            added_heading: "DATE ADDED",
             show_added_by: false,
             page: Page::TopSongs,
             loading: app.home.top_songs_loading,
@@ -1478,6 +1480,7 @@ pub fn playlist(app: &mut App, ui: &mut egui::Ui, id: &str) {
                             .as_deref()
                             .is_some_and(|a| !a.starts_with("1970-01-01"))
                     }),
+                    added_heading: "DATE ADDED",
                     show_added_by: made_together,
                     page: Page::Playlist(id.to_string()),
                     loading: page.items.loading,
@@ -1592,6 +1595,7 @@ pub fn album(app: &mut App, ui: &mut egui::Ui, id: &str) {
                     show_album: false,
                     show_cover: false,
                     show_added: false,
+                    added_heading: "DATE ADDED",
                     show_added_by: false,
                     page: Page::Album(id.to_string()),
                     loading: page.tracks.loading,
@@ -1940,6 +1944,7 @@ pub fn liked(app: &mut App, ui: &mut egui::Ui) {
             show_album: true,
             show_cover: true,
             show_added: true,
+            added_heading: "DATE ADDED",
             show_added_by: false,
             page: Page::LikedSongs,
             loading,
@@ -2235,6 +2240,7 @@ mod tests {
                             show_album: false,
                             show_cover: false,
                             show_added: false,
+                            added_heading: "DATE ADDED",
                             show_added_by: false,
                             page: Page::Playlist("retry".into()),
                             loading: false,
@@ -2322,6 +2328,7 @@ mod tests {
                     show_album: false,
                     show_cover: false,
                     show_added: false,
+                    added_heading: "DATE ADDED",
                     show_added_by: false,
                     page: Page::Playlist("filtered".into()),
                     loading: false,
@@ -2538,6 +2545,33 @@ mod tests {
     }
 
     #[test]
+    fn filtered_table_view_plays_only_visible_rows() {
+        let app = test_app();
+        let items = make_test_tracks();
+        let ctx = egui::Context::default();
+        let mut view = None;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            view = Some(prepare_table_view(
+                ui,
+                &app,
+                &Page::LikedSongs,
+                &items,
+                "desp",
+                None,
+                1,
+            ));
+        });
+        output.textures_delta.clear();
+
+        let view = view.expect("table view");
+        assert_eq!(view.visible.as_ref(), &[2]);
+        assert_eq!(
+            view.view_uris.as_deref(),
+            Some(["spotify:track:t_2".to_string()].as_slice())
+        );
+    }
+
+    #[test]
     fn test_table_cache_validation() {
         let sort = Some(TableSort {
             column: SortColumn::Title,
@@ -2712,6 +2746,7 @@ mod tests {
                                 show_album: true,
                                 show_cover: true,
                                 show_added: false,
+                                added_heading: "DATE ADDED",
                                 show_added_by: false,
                                 page: Page::Playlist("test".into()),
                                 loading: false,

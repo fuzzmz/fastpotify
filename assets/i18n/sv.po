@@ -79,96 +79,100 @@ msgstr "Spellista • {owner}"
 msgid "Home"
 msgstr "Hem"
 
-#: src/ui/sidebar.rs:821 src/app.rs:5931 src/ui/keys.rs:245
+#: src/ui/sidebar.rs:821
+msgid "New releases"
+msgstr "Nya släpp"
+
+#: src/ui/sidebar.rs:832 src/app.rs:5931 src/ui/keys.rs:245
 msgid "Search"
 msgstr "Sök"
 
-#: src/ui/sidebar.rs:860
+#: src/ui/sidebar.rs:871
 msgid "Hide sidebar (Ctrl+B)"
 msgstr "Dölj sidofältet (Ctrl+B)"
 
-#: src/ui/sidebar.rs:861
+#: src/ui/sidebar.rs:872
 msgid "Hide sidebar (Cmd+B)"
 msgstr "Dölj sidofältet (Cmd+B)"
 
-#: src/ui/sidebar.rs:870
+#: src/ui/sidebar.rs:881
 msgid "Show as list"
 msgstr "Visa som lista"
 
-#: src/ui/sidebar.rs:872
+#: src/ui/sidebar.rs:883
 msgid "Show as grid"
 msgstr "Visa som rutnät"
 
-#: src/ui/sidebar.rs:885
+#: src/ui/sidebar.rs:896
 msgid "Create a playlist"
 msgstr "Skapa spellista"
 
-#: src/ui/sidebar.rs:901
+#: src/ui/sidebar.rs:912
 msgid "Search Your Library"
 msgstr "Sök i biblioteket"
 
-#: src/ui/sidebar.rs:917
+#: src/ui/sidebar.rs:928
 msgid "Library"
 msgstr "Bibliotek"
 
-#: src/ui/sidebar.rs:937 src/app.rs:5904 src/model.rs:636 src/ui/search.rs:632
+#: src/ui/sidebar.rs:948 src/app.rs:5904 src/model.rs:636 src/ui/search.rs:632
 msgid "Playlists"
 msgstr "Spellistor"
 
-#: src/ui/sidebar.rs:938 src/model.rs:635 src/model.rs:749 src/ui/library.rs:17
+#: src/ui/sidebar.rs:949 src/model.rs:635 src/model.rs:749 src/ui/library.rs:17
 #: src/ui/search.rs:565
 msgid "Albums"
 msgstr "Album"
 
-#: src/ui/sidebar.rs:939 src/model.rs:634 src/ui/library.rs:22
+#: src/ui/sidebar.rs:950 src/model.rs:634 src/ui/library.rs:22
 #: src/ui/search.rs:503
 msgid "Artists"
 msgstr "Artister"
 
-#: src/ui/sidebar.rs:940 src/model.rs:637 src/ui/library.rs:27
+#: src/ui/sidebar.rs:951 src/model.rs:637 src/ui/library.rs:27
 #: src/ui/search.rs:683
 msgid "Podcasts"
 msgstr "Poddar"
 
-#: src/ui/sidebar.rs:961
+#: src/ui/sidebar.rs:972
 msgid "Search in Your Library"
 msgstr "Sök i ditt bibliotek"
 
-#: src/ui/sidebar.rs:1089 src/app.rs:2439 src/ui/artist.rs:197
+#: src/ui/sidebar.rs:1100 src/app.rs:2439 src/ui/artist.rs:197
 #: src/ui/artist.rs:299 src/ui/home.rs:545 src/ui/library.rs:95
 #: src/ui/search.rs:145 src/ui/search.rs:470 src/ui/winamp/playlist.rs:729
 msgid "Artist"
 msgstr "Artist"
 
 #. Translators: {publisher} is the podcast's publisher.
-#: src/ui/sidebar.rs:1125 src/ui/search.rs:239
+#: src/ui/sidebar.rs:1136 src/ui/search.rs:239
 #, rust-format
 msgid "Podcast • {publisher}"
 msgstr "Podd • {publisher}"
 
-#: src/ui/sidebar.rs:1183
+#: src/ui/sidebar.rs:1194
 msgid "Nothing here yet."
 msgstr "Här finns inget än."
 
-#: src/ui/sidebar.rs:1185
+#: src/ui/sidebar.rs:1196
 msgid "No matches."
 msgstr "Inga träffar."
 
-#: src/ui/sidebar.rs:1811
+#: src/ui/sidebar.rs:1822
 msgid "Sort by recently played"
 msgstr "Sortera efter nyligen spelade"
 
-#: src/ui/sidebar.rs:1832 src/ui/player_bar.rs:681 src/ui/widgets.rs:956
+#: src/ui/sidebar.rs:1843 src/ui/player_bar.rs:681 src/ui/widgets.rs:956
 #: src/ui/widgets.rs:2349 src/ui/artist.rs:329 src/ui/collection.rs:214
 #: src/ui/home.rs:147 src/ui/search.rs:390 src/ui/show.rs:311
 msgid "Play"
 msgstr "Spela"
 
-#: src/ui/sidebar.rs:1850
+#: src/ui/sidebar.rs:1861
 msgid "Unpin"
 msgstr "Lossa"
 
-#: src/ui/sidebar.rs:1852
+#: src/ui/sidebar.rs:1863
 msgid "Pin to top"
 msgstr "Fäst överst"
 

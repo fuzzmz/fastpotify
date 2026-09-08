@@ -34,6 +34,10 @@ cannot play music through Spotifast on this computer or another device.
   show several devices at once, fitting the window; longer lists scroll.
 - **Library.** Browse playlists, Liked Songs, saved albums, followed artists,
   podcasts, and saved episodes. Create, edit, and reorder your playlists.
+- **New releases.** See new tracks from followed artists and artists discovered
+  through saved albums or Liked Songs in one playable list. A liked-song
+  threshold and time-period, release-type, text, remix, and duplicate filters
+  keep the feed focused.
 - **Search** across songs, artists, albums, playlists, podcasts, and
   episodes, with artist pages, discographies, and related artists. When Spotify
   provides an artist profile, select its name on a song, including the top

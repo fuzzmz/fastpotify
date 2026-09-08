@@ -11,6 +11,7 @@ mod keys;
 pub mod library;
 pub mod login;
 mod lyrics;
+pub mod new_releases;
 pub mod player_bar;
 pub mod queue;
 pub mod radio;
@@ -153,6 +154,7 @@ fn page_tint(app: &mut App) -> Option<Color32> {
             .map(str::to_string),
         Page::Radio(seed) => pick_image(&app.radio_images(seed), 64).map(str::to_string),
         Page::LikedSongs => return Some(Color32::from_rgb(0x50, 0x38, 0xc8)),
+        Page::NewReleases => return Some(Color32::from_rgb(0x18, 0x78, 0x54)),
         _ => None,
     };
     if !app.settings.accent_from_art && image.is_some() {
@@ -174,7 +176,7 @@ fn central(app: &mut App, ui: &mut egui::Ui) {
             if let Some(tint) = tint {
                 let strength = if matches!(
                     app.page(),
-                    Page::Home | Page::Search | Page::Settings | Page::Queue
+                    Page::Home | Page::NewReleases | Page::Search | Page::Settings | Page::Queue
                 ) {
                     0.45
                 } else {
@@ -209,6 +211,7 @@ fn central(app: &mut App, ui: &mut egui::Ui) {
                             ui.set_min_width(ui.available_width());
                             match page {
                                 Page::Home => home::show(app, ui),
+                                Page::NewReleases => new_releases::show(app, ui),
                                 Page::TopSongs => collection::top_songs(app, ui),
                                 Page::Search => search::show(app, ui),
                                 Page::LikedSongs => collection::liked(app, ui),
