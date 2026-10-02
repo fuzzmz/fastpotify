@@ -680,6 +680,9 @@ Use `--demo-data <DIRECTORY>` to keep demo caches and logs in a separate directo
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull
 request. It covers project scope and required checks.
 
+Fork maintainers can optionally configure [automatic upstream rebases and
+cross-platform feature builds](FORK_AUTOMATION.md).
+
 Translations use standard gettext `.po` files in `assets/i18n/`, with an English
 `.pot` template. The interface is marked for translation throughout and ships
 with 13 translations, including Portuguese and Chinese variants.
