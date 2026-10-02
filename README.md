@@ -135,6 +135,9 @@ is described in [PACKAGING.md](PACKAGING.md).
 is Spotifast's sibling. Both are built on
 [fastframe](https://github.com/crmne/fastframe).
 
+Fork maintainers can optionally configure [automatic upstream rebases and
+cross-platform feature builds](FORK_AUTOMATION.md).
+
 ## Acknowledgements
 
 Spotifast uses [librespot](https://github.com/librespot-org/librespot),
