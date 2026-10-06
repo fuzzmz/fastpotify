@@ -1,6 +1,6 @@
 # Fork synchronization and feature builds
 
-This fork can keep `main` identical to `crmne/fastpotify:main`, rebase
+This fork can keep `main` identical to `crmne/spotifast:main`, rebase
 `feature/new-releases` on top of it, and publish installable feature builds.
 The automation lives in `.github/workflows/fork-sync.yml`.
 
@@ -8,9 +8,10 @@ The automation lives in `.github/workflows/fork-sync.yml`.
 
 1. Push this workflow to `feature/new-releases`.
 2. In **Settings > Branches > Default branch**, make
-   `feature/new-releases` the fork's default branch. GitHub only runs scheduled
-   workflows from the default branch. `main` cannot host the workflow because
-   the automation deliberately makes it an exact copy of upstream.
+   `feature/new-releases` the fork's default branch. GitHub only exposes a
+   manually dispatched workflow when its workflow file exists on the default
+   branch. `main` cannot host the workflow because the automation deliberately
+   makes it an exact copy of upstream.
 3. In **Settings > Actions > General > Workflow permissions**, select
    **Read and write permissions**.
 4. Add `OPENAI_API_KEY` in **Settings > Secrets and variables > Actions > New
@@ -22,10 +23,9 @@ The automation lives in `.github/workflows/fork-sync.yml`.
    and force-update `feature/new-releases`, and to force-update the rolling
    `new-releases-latest` tag. Do not make that tag immutable.
 
-The schedule runs at 02:17, 08:17, 14:17, and 20:17 Europe/Bucharest time.
-GitHub may delay scheduled jobs during busy periods. For a public repository,
-GitHub can disable scheduled workflows after 60 days without repository
-activity; re-enable the workflow from the Actions page if that happens.
+The workflow has no schedule. Start it from **Actions > Sync upstream and
+publish feature builds > Run workflow** whenever you want to check upstream,
+rebase the feature branch, and publish builds.
 
 ## What each run does
 

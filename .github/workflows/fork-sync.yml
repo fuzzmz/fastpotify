@@ -1,9 +1,6 @@
 name: Sync upstream and publish feature builds
 
 on:
-  schedule:
-    - cron: "17 2,8,14,20 * * *"
-      timezone: Europe/Bucharest
   workflow_dispatch:
     inputs:
       force_build:
@@ -22,7 +19,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   FEATURE_BRANCH: feature/new-releases
-  UPSTREAM_REPOSITORY: crmne/fastpotify
+  UPSTREAM_REPOSITORY: crmne/spotifast
 
 jobs:
   rebase:
