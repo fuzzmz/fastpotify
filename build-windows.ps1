@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Builds Fastpotify locally on Windows.
+Builds Spotifast locally on Windows.
 
 .DESCRIPTION
 The default release build includes MilkDrop and validates its native build
@@ -113,11 +113,11 @@ finally {
 }
 
 $profileDirectory = $Configuration.ToLowerInvariant()
-$executable = Join-Path $repoRoot "target\$profileDirectory\fastpotify.exe"
+$executable = Join-Path $repoRoot "target\$profileDirectory\spotifast.exe"
 if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
     throw "Cargo succeeded, but '$executable' was not found."
 }
 
 Write-Host ''
-Write-Host 'Fastpotify was built successfully:' -ForegroundColor Green
+Write-Host 'Spotifast was built successfully:' -ForegroundColor Green
 Write-Host $executable
