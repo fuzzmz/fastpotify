@@ -81,7 +81,7 @@ msgstr "Hem"
 
 #: src/ui/sidebar.rs:846
 msgid "New releases"
-msgstr ""
+msgstr "Nya släpp"
 
 #: src/ui/sidebar.rs:857 src/app.rs:6028 src/ui/keys.rs:245
 msgid "Search"
