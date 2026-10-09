@@ -86,7 +86,7 @@ msgstr "Пошук"
 
 #: src/ui/sidebar.rs:846
 msgid "New releases"
-msgstr ""
+msgstr "Нові релізи"
 
 #: src/ui/sidebar.rs:874
 msgid "Hide sidebar (Ctrl+B)"
